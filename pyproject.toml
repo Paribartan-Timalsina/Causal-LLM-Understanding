@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "causal-llm-eval"
+version = "1.0.0"
+description = "Probing causal inference capabilities in LLMs across Pearl's Hierarchy"
+requires-python = ">=3.9"
+
+[tool.setuptools.packages.find]
+include = ["causal_llm*", "scripts*"]
