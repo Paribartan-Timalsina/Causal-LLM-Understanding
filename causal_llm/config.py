@@ -1,106 +1,83 @@
-"""Central configuration for the Causal LLM Reasoning evaluation framework."""
+"""Run-wide configuration: models, paths, prompting strategies."""
 
-import random
+from __future__ import annotations
+
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Reproducibility
-# ---------------------------------------------------------------------------
 SEED = 42
 
-# ---------------------------------------------------------------------------
-# Model configurations
-# ---------------------------------------------------------------------------
 MODEL_CONFIGS = {
-    "gpt2_small": {
-        "name": "gpt2",
-        "display_name": "GPT-2 Small (124M)",
-        "params": "124M",
-        "quantize": False,
+    'gpt2_small': {
+        'name': 'gpt2',
+        'display_name': 'GPT-2 Small',
+        'params': '124M',
+        'quantize': False,
     },
-    "gpt2_large": {
-        "name": "gpt2-large",
-        "display_name": "GPT-2 Large (774M)",
-        "params": "774M",
-        "quantize": False,
+    'gpt2_large': {
+        'name': 'gpt2-large',
+        'display_name': 'GPT-2 Large',
+        'params': '774M',
+        'quantize': False,
     },
-    "phi2": {
-        "name": "microsoft/phi-2",
-        "display_name": "Phi-2 (2.7B)",
-        "params": "2.7B",
-        "quantize": True,
+    'qwen_1_5b': {
+        'name': 'Qwen/Qwen2.5-1.5B-Instruct',
+        'display_name': 'Qwen2.5-1.5B-Instruct',
+        'params': '1.5B',
+        'quantize': True,
+    },
+    'llama_3_3b': {
+        'name': 'meta-llama/Llama-3.2-3B-Instruct',
+        'display_name': 'Llama-3.2-3B-Instruct',
+        'params': '3.2B',
+        'quantize': True,
+    },
+    'gemma_2_2b': {
+        'name': 'google/gemma-2-2b-it',
+        'display_name': 'Gemma-2-2B-it',
+        'params': '2.6B',
+        'quantize': True,
     },
 }
 
-MODEL_LABELS = {k: v["display_name"] for k, v in MODEL_CONFIGS.items()}
+MODEL_LABELS = {
+    'gpt2_small':  'GPT-2 Small (124M)',
+    'gpt2_large':  'GPT-2 Large (774M)',
+    'qwen_1_5b':   'Qwen2.5-1.5B-Inst',
+    'llama_3_3b':  'Llama-3.2-3B-Inst',
+    'gemma_2_2b':  'Gemma-2-2B-it',
+}
+
+MODEL_COLORS = {
+    'gpt2_small':  '#4C72B0',
+    'gpt2_large':  '#DD8452',
+    'qwen_1_5b':   '#8172B3',
+    'llama_3_3b':  '#C44E52',
+    'gemma_2_2b':  '#937860',
+}
+
+LEVEL_COLORS = {'L1': '#4C72B0', 'L2': '#DD8452', 'L3': '#C44E52'}
+
+# Models that use raw-generation scoring rather than PMI; their accuracy
+# numbers shouldn't be compared apples-to-apples with instruct models.
+AT_CHANCE_MODELS = {'gpt2_small', 'gpt2_large'}
+
+NUM_QUESTIONS_PER_CELL = 20  # per (graph_type, reasoning_level)
 
 MAX_SEQ_LEN = 512
 MODEL_MAX_SEQ_LEN = {
-    "gpt2_small": 512,
-    "gpt2_large": 512,
-    "phi2": 2048,
+    'gpt2_small': 512,
+    'gpt2_large': 512,
+    'qwen_1_5b':  2048,
+    'llama_3_3b': 2048,
+    'gemma_2_2b': 2048,
 }
 
-# ---------------------------------------------------------------------------
-# Benchmark settings
-# ---------------------------------------------------------------------------
-NUM_QUESTIONS_PER_CELL = 20
-
-PROMPTING_STRATEGIES = ["zero_shot", "few_shot", "chain_of_thought", "causal_chain"]
-
-# ---------------------------------------------------------------------------
-# Probing settings
-# ---------------------------------------------------------------------------
-PROBE_NUM_SAMPLES = 200
-PROBE_CV_FOLDS = 5
-
-# ---------------------------------------------------------------------------
-# Output
-# ---------------------------------------------------------------------------
-OUTPUT_DIR = Path("./output_llm")
-
-# ---------------------------------------------------------------------------
-# Visualization colors
-# ---------------------------------------------------------------------------
-MODEL_COLORS = {
-    "gpt2_small": "#4C72B0",
-    "gpt2_large": "#DD8452",
-    "phi2": "#55A868",
+PROMPTING_STRATEGIES = ['zero_shot', 'few_shot', 'chain_of_thought', 'causal_chain']
+STRATEGY_LABELS = {
+    'zero_shot': 'Zero-Shot',
+    'few_shot': 'Few-Shot',
+    'chain_of_thought': 'CoT',
+    'causal_chain': 'Causal Chain',
 }
 
-LEVEL_COLORS = {
-    "L1": "#4C72B0",
-    "L2": "#DD8452",
-    "L3": "#C44E52",
-}
-
-
-# ---------------------------------------------------------------------------
-# Seed utilities
-# ---------------------------------------------------------------------------
-def set_seed(seed: int = SEED) -> None:
-    """Set random seeds for reproducibility across all libraries."""
-    import numpy as np
-    import torch
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def get_device():
-    """Return the best available device (CUDA > CPU)."""
-    import torch
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-# ---------------------------------------------------------------------------
-# YAML config loading (optional override)
-# ---------------------------------------------------------------------------
-def load_yaml_config(path: str) -> dict:
-    """Load a YAML configuration file and return its contents as a dict."""
-    import yaml
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+OUTPUT_DIR = Path('./output_llm')
