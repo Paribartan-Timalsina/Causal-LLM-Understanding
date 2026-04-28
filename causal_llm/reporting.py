@@ -1,11 +1,8 @@
-"""Result serialization: JSON summaries, CSV tables, JSONL raw predictions, manifest."""
-
-from __future__ import annotations
+"""Write JSON / CSV / JSONL output files for a completed run."""
 
 import csv
 import datetime as dt
 import json
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -14,18 +11,8 @@ from .config import MODEL_CONFIGS, MODEL_LABELS, PROMPTING_STRATEGIES
 from .graphs import CAUSAL_GRAPHS
 
 
-def save_results(
-    output_dir: Path,
-    benchmark: list[dict],
-    accuracy_matrix: dict,
-    detailed_acc: dict,
-    all_results: dict,
-    strategy_results: dict,
-    active_models: dict,
-    skipped_models: list,
-    seed: int,
-) -> None:
-    """Write results_summary.json + 3 CSVs + raw_predictions.jsonl + run_manifest.json."""
+def save_results(output_dir, benchmark, accuracy_matrix, detailed_acc,
+                 all_results, strategy_results, active_models, skipped_models, seed):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summary = {
@@ -50,7 +37,7 @@ def save_results(
             for mk in active_models for s in PROMPTING_STRATEGIES
         },
     }
-    _write_json(output_dir / 'results_summary.json', summary)
+    _dump_json(output_dir / 'results_summary.json', summary)
 
     with open(output_dir / 'zero_shot_accuracy.csv', 'w', newline='') as f:
         w = csv.writer(f)
@@ -76,12 +63,12 @@ def save_results(
         for mk in active_models:
             for lv in ['L1', 'L2', 'L3']:
                 for gt in CAUSAL_GRAPHS:
-                    acc = detailed_acc[mk].get(lv, {}).get(gt, 0)
-                    w.writerow([MODEL_LABELS[mk], lv, gt, acc])
+                    w.writerow([MODEL_LABELS[mk], lv, gt,
+                                detailed_acc[mk].get(lv, {}).get(gt, 0)])
     print('Saved', output_dir / 'detailed_accuracy.csv')
 
     rows = []
-    for (mk, lv), (results, _acc) in all_results.items():
+    for (mk, _lv), (results, _acc) in all_results.items():
         for r in results:
             rows.append({
                 'source': 'zero_shot_full',
@@ -112,7 +99,7 @@ def save_results(
             f.write(json.dumps(row, default=str) + '\n')
     print(f'Saved {len(rows)} rows to', output_dir / 'raw_predictions.jsonl')
 
-    manifest: dict = {
+    manifest = {
         'seed': seed,
         'timestamp': dt.datetime.now(dt.timezone.utc).isoformat(),
         'models': {mk: MODEL_CONFIGS[mk]['name'] for mk in active_models},
@@ -131,10 +118,10 @@ def save_results(
         manifest['cuda'] = getattr(torch.version, 'cuda', None)  # type: ignore[attr-defined]
     else:
         manifest['gpu'] = 'cpu'
-    _write_json(output_dir / 'run_manifest.json', manifest)
+    _dump_json(output_dir / 'run_manifest.json', manifest)
 
 
-def _write_json(path: Path, payload: dict) -> None:
+def _dump_json(path, payload):
     with open(path, 'w') as f:
         json.dump(payload, f, indent=2, default=str)
     print('Saved', path)

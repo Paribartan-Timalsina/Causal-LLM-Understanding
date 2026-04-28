@@ -1,11 +1,6 @@
-"""Realistic causal-story templates for each graph type.
-
-Each scenario has a `story` string and a `vars` dict mapping graph-variable
-names (e.g. 'X', 'Y') to human-readable concept names. The benchmark generator
-substitutes these into the question text.
-"""
-
-from __future__ import annotations
+# Story templates per graph type. Each entry has the prose `story` and a
+# `vars` mapping from graph variable (X/Y/Z/...) to the concept it stands for.
+# The benchmark generator substitutes `vars` into the question text.
 
 SCENARIOS = {
     'chain': [

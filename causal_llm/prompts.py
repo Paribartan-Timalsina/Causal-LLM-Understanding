@@ -1,14 +1,7 @@
-"""Prompt formatters for each strategy + content-free prompts for PMI calibration."""
-
-from __future__ import annotations
-
-from typing import Callable
-
-Question = dict
-Formatter = Callable[[Question], str]
+"""Prompt formatters for each strategy + content-free prompts for PMI."""
 
 
-def format_zero_shot(q: Question) -> str:
+def format_zero_shot(q):
     return f"""Consider the following causal scenario:
 
 {q['scenario']}
@@ -46,7 +39,7 @@ _FEW_SHOT_EXAMPLES = {
 }
 
 
-def format_few_shot(q: Question) -> str:
+def format_few_shot(q):
     ex = _FEW_SHOT_EXAMPLES.get(q['level'], _FEW_SHOT_EXAMPLES['L1'])
     demo = (
         f"Example:\n"
@@ -71,7 +64,7 @@ Answer (respond with a single letter A/B/C/D):
 Answer:"""
 
 
-def format_chain_of_thought(q: Question) -> str:
+def format_chain_of_thought(q):
     return f"""Consider the following causal scenario:
 
 {q['scenario']}
@@ -92,7 +85,7 @@ Answer (respond with a single letter A/B/C/D):
 Answer:"""
 
 
-def format_causal_chain(q: Question) -> str:
+def format_causal_chain(q):
     return f"""You are a causal reasoning expert. Analyze this scenario using Pearl's causal framework.
 
 Scenario: {q['scenario']}
@@ -113,7 +106,7 @@ Answer (respond with a single letter A/B/C/D):
 Answer:"""
 
 
-PROMPT_FORMATTERS: dict[str, Formatter] = {
+PROMPT_FORMATTERS = {
     'zero_shot': format_zero_shot,
     'few_shot': format_few_shot,
     'chain_of_thought': format_chain_of_thought,
@@ -121,24 +114,16 @@ PROMPT_FORMATTERS: dict[str, Formatter] = {
 }
 
 
-def _build_content_free(formatter: Formatter) -> str:
-    """Same template, but scenario/question/choices replaced with 'N/A'.
-
-    Used for PMI calibration: scoring the answer letters against this prompt
-    captures only the model's letter prior, so we can subtract it.
-    """
-    dummy = {
-        'scenario': 'N/A',
-        'question': 'N/A',
-        'choices': {'A': 'N/A', 'B': 'N/A', 'C': 'N/A', 'D': 'N/A'},
-        'answer': 'A',
-        'level': 'L1',
-        'id': 'dummy',
-        'graph': 'chain',
-    }
-    return formatter(dummy)
-
-
-CONTENT_FREE_PROMPTS: dict[str, str] = {
-    name: _build_content_free(fn) for name, fn in PROMPT_FORMATTERS.items()
+# Same templates with scenario/question/choices replaced by 'N/A'. Scoring
+# the answer letters against this captures the model's letter prior, which
+# we subtract from the real-prompt scores (PMI calibration).
+_DUMMY_Q = {
+    'scenario': 'N/A',
+    'question': 'N/A',
+    'choices': {'A': 'N/A', 'B': 'N/A', 'C': 'N/A', 'D': 'N/A'},
+    'answer': 'A',
+    'level': 'L1',
+    'id': 'dummy',
+    'graph': 'chain',
 }
+CONTENT_FREE_PROMPTS = {name: fn(_DUMMY_Q) for name, fn in PROMPT_FORMATTERS.items()}

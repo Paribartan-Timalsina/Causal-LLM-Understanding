@@ -36,9 +36,9 @@ Four canonical causal structures × three reasoning levels × 20 questions = 240
 
 | Level | Name | Question type |
 |---|---|---|
-| L1 | Association | P(Y \| X) — observation |
-| L2 | Intervention | P(Y \| do(X)) — manipulation |
-| L3 | Counterfactual | P(Y_x \| X′,Y′) — would-have-been |
+| L1 | Association | P(Y \| X) - observation |
+| L2 | Intervention | P(Y \| do(X)) - manipulation |
+| L3 | Counterfactual | P(Y_x \| X′,Y′) - would-have-been |
 
 ## Install
 
@@ -115,4 +115,4 @@ The included tests are CPU-only (benchmark generation, fingerprinting, prompt fo
 
 - **PMI calibration** subtracts the model's letter prior (measured against an N/A content-free prompt) from each raw log-prob to remove token-frequency bias.
 - **Generation fallback** kicks in when calibration priors are NaN/collapsed, or when a base LM has a prior range so wide that PMI's linear correction can't undo the nonlinear softmax bias (typical for GPT-2 Small/Large).
-- **GPT-2 results sit at chance** (debiased CIs include 25%) — they're a calibration baseline, not a reasoning result. Cross-model comparisons against them are not apples-to-apples.
+- **GPT-2 results sit at chance** (debiased CIs include 25%) - they're a calibration baseline, not a reasoning result. Cross-model comparisons against them are not apples-to-apples.

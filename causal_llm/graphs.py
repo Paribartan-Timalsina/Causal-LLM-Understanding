@@ -1,12 +1,8 @@
-"""Canonical causal graph structures used by the benchmark."""
-
-from __future__ import annotations
-
-from pathlib import Path
+"""Four canonical causal graphs (chain, fork, collider, diamond)."""
 
 import matplotlib.pyplot as plt
 import networkx as nx
-from matplotlib.figure import Figure
+
 
 CAUSAL_GRAPHS = {
     'chain': {
@@ -41,7 +37,8 @@ CAUSAL_GRAPHS = {
     },
 }
 
-_LAYOUT_OVERRIDES = {
+# Manual layouts -- spring layout makes these messy.
+_LAYOUTS = {
     'chain':    {'X': (0, 0), 'Y': (1, 0), 'Z': (2, 0)},
     'fork':     {'C': (1, 1), 'X': (0, 0), 'Z': (2, 0)},
     'collider': {'X': (0, 1), 'Z': (2, 1), 'M': (1, 0)},
@@ -49,29 +46,25 @@ _LAYOUT_OVERRIDES = {
 }
 
 
-def plot_causal_graphs(output_path: Path | None = None) -> Figure:
-    """Render all four canonical causal graphs side-by-side."""
+def plot_causal_graphs(output_path=None):
     n = len(CAUSAL_GRAPHS)
     fig, axes = plt.subplots(1, n, figsize=(4.5 * n, 4))
     if n == 1:
         axes = [axes]
 
-    for ax, (gname, ginfo) in zip(axes, CAUSAL_GRAPHS.items()):
+    for ax, (name, info) in zip(axes, CAUSAL_GRAPHS.items()):
         G = nx.DiGraph()
-        G.add_edges_from(ginfo['edges'])
-        pos = _LAYOUT_OVERRIDES[gname]
+        G.add_edges_from(info['edges'])
+        pos = _LAYOUTS[name]
+        node_colors = ['#BAE1FF'] * G.number_of_nodes()
 
-        nx.draw_networkx_nodes(
-            G, pos, ax=ax, node_color=['#BAE1FF'] * G.number_of_nodes(),
-            node_size=800, edgecolors='black', linewidths=1.5,
-        )
+        nx.draw_networkx_nodes(G, pos, ax=ax, node_color=node_colors,
+                               node_size=800, edgecolors='black', linewidths=1.5)
         nx.draw_networkx_labels(G, pos, ax=ax, font_size=13, font_weight='bold')
-        nx.draw_networkx_edges(
-            G, pos, ax=ax, edge_color='#333333',
-            arrows=True, arrowsize=20, width=2,
-            connectionstyle='arc3,rad=0.1',
-        )
-        ax.set_title(ginfo['description'], fontsize=11, fontweight='bold')
+        nx.draw_networkx_edges(G, pos, ax=ax, edge_color='#333',
+                               arrows=True, arrowsize=20, width=2,
+                               connectionstyle='arc3,rad=0.1')
+        ax.set_title(info['description'], fontsize=11, fontweight='bold')
         ax.axis('off')
 
     plt.suptitle('Four Canonical Causal Structures', fontsize=15, fontweight='bold', y=1.02)

@@ -1,13 +1,10 @@
-"""End-to-end evaluation: build benchmark, load models, run zero-shot + strategies, save results.
+"""Run the full evaluation: build benchmark, load models, score, save results.
 
-Usage:
-    python -m scripts.run                          # full run (5 models, 240 questions)
-    python -m scripts.run --output-dir runs/v1     # custom output directory
-    python -m scripts.run --models qwen_1_5b llama_3_3b   # subset of models
-    python -m scripts.run --strategy-bucket 20     # full benchmark for strategy comparison
+Examples:
+    python -m scripts.run
+    python -m scripts.run --models qwen_1_5b llama_3_3b
+    python -m scripts.run --skip-strategies
 """
-
-from __future__ import annotations
 
 import argparse
 import random
@@ -38,23 +35,23 @@ from causal_llm import (
 )
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--output-dir', type=Path, default=OUTPUT_DIR,
-                   help=f'Where to write outputs (default: {OUTPUT_DIR})')
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--output-dir', type=Path, default=OUTPUT_DIR)
     p.add_argument('--models', nargs='*', default=None,
                    choices=list(MODEL_CONFIGS.keys()),
-                   help='Subset of models to evaluate (default: all)')
+                   help='subset of models to run (default: all)')
     p.add_argument('--strategy-bucket', type=int, default=10,
-                   help='Questions per (graph,level) bucket for strategy comparison '
+                   help='questions per (graph,level) bucket for strategy comparison '
                         '(10 = 120 total, 20 = 240 = full benchmark)')
     p.add_argument('--seed', type=int, default=SEED)
     p.add_argument('--skip-strategies', action='store_true',
-                   help='Run only zero-shot evaluation (no strategy comparison)')
+                   help='only run zero-shot, skip the strategy sweep')
     return p.parse_args()
 
 
-def seed_everything(seed: int) -> None:
+def seed_everything(seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -67,19 +64,17 @@ def seed_everything(seed: int) -> None:
         pass
 
 
-def stratified_sample(benchmark: list[dict], per_bucket: int) -> list[dict]:
-    """Pick `per_bucket` questions from each (graph, level) cell, in a stable order."""
-    by_gl = defaultdict(list)
+def stratified_sample(benchmark, per_bucket):
+    by_cell = defaultdict(list)
     for q in benchmark:
-        by_gl[(q['graph'], q['level'])].append(q)
+        by_cell[(q['graph'], q['level'])].append(q)
     out = []
-    for key in sorted(by_gl.keys()):
-        out.extend(by_gl[key][:per_bucket])
+    for key in sorted(by_cell.keys()):
+        out.extend(by_cell[key][:per_bucket])
     return out
 
 
 def run_zero_shot(active_models, models, tokenizers, benchmark, device):
-    """Score every model on the full benchmark, broken out by reasoning level."""
     by_level = {lv: [q for q in benchmark if q['level'] == lv] for lv in ['L1', 'L2', 'L3']}
     all_results = {}
     accuracy_matrix = {}
@@ -88,10 +83,8 @@ def run_zero_shot(active_models, models, tokenizers, benchmark, device):
         accuracy_matrix[mk] = {}
         print(f"\n{'=' * 60}\nEvaluating {MODEL_LABELS[mk]}\n{'=' * 60}")
         for lv in ['L1', 'L2', 'L3']:
-            results, acc = evaluate_model(
-                mk, by_level[lv], 'zero_shot',
-                models, tokenizers, device,
-            )
+            results, acc = evaluate_model(mk, by_level[lv], 'zero_shot',
+                                          models, tokenizers, device)
             all_results[(mk, lv)] = (results, acc)
             accuracy_matrix[mk][lv] = acc
         if torch.cuda.is_available():
@@ -111,31 +104,31 @@ def print_zero_shot_summary(active_models, accuracy_matrix):
     print(f"{'Random baseline':25s} | {'25.0%':>12s} | {'25.0%':>12s} | {'25.0%':>12s}")
 
 
-def compute_detailed_acc(active_models, all_results) -> dict:
-    """accuracy[model][level][graph_type]."""
-    detailed = defaultdict(lambda: defaultdict(dict))
-    for (mk, lv), (results, _acc) in all_results.items():
+def compute_detailed_acc(active_models, all_results):
+    acc = defaultdict(lambda: defaultdict(dict))
+    for (mk, lv), (results, _) in all_results.items():
         for gt in {r['graph'] for r in results}:
             graph_results = [r for r in results if r['graph'] == gt]
             if graph_results:
-                detailed[mk][lv][gt] = float(np.mean([r['correct'] for r in graph_results]))
-    return {mk: dict(detailed[mk]) for mk in active_models}
+                acc[mk][lv][gt] = float(np.mean([r['correct'] for r in graph_results]))
+    return {mk: dict(acc[mk]) for mk in active_models}
 
 
 def run_strategies(active_models, models, tokenizers, sample, device):
-    strategy_results = {}
+    out = {}
     for mk in active_models:
         print(f"\n{'=' * 60}\n{MODEL_LABELS[mk]} -- Prompting Strategy Comparison\n{'=' * 60}")
         for s in PROMPTING_STRATEGIES:
             results, acc = evaluate_model(mk, sample, s, models, tokenizers, device)
             by_level = {
-                lv: float(np.mean([r['correct'] for r in results if r['level'] == lv])) if any(r['level'] == lv for r in results) else 0.0
+                lv: float(np.mean([r['correct'] for r in results if r['level'] == lv]))
+                if any(r['level'] == lv for r in results) else 0.0
                 for lv in ['L1', 'L2', 'L3']
             }
-            strategy_results[(mk, s)] = {'accuracy': acc, 'results': results, 'by_level': by_level}
+            out[(mk, s)] = {'accuracy': acc, 'results': results, 'by_level': by_level}
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    return strategy_results
+    return out
 
 
 def print_strategy_summary(active_models, strategy_results):
@@ -151,7 +144,7 @@ def print_strategy_summary(active_models, strategy_results):
         print(row)
 
 
-def main() -> int:
+def main():
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -162,17 +155,15 @@ def main() -> int:
 
     benchmark = build_benchmark(seed=args.seed)
     summary = benchmark_summary(benchmark)
-    print(f'Benchmark: {summary["total"]} questions, '
-          f'{summary["duplicates"]} duplicate fingerprints, '
-          f'answer distribution {summary["answers"]}')
+    print(f"Benchmark: {summary['total']} questions, "
+          f"{summary['duplicates']} duplicate fingerprints, "
+          f"answers {summary['answers']}")
 
     plot_causal_graphs(args.output_dir / 'causal_graphs.png')
     plot_benchmark_stats(benchmark, args.output_dir / 'benchmark_stats.png')
 
-    configs = (
-        {k: v for k, v in MODEL_CONFIGS.items() if k in args.models}
+    configs = {k: v for k, v in MODEL_CONFIGS.items() if k in args.models} \
         if args.models else MODEL_CONFIGS
-    )
     loaded = load_models(device, configs=configs)
     if not loaded.models:
         print('No models loaded; aborting.', file=sys.stderr)
@@ -187,6 +178,7 @@ def main() -> int:
                           args.output_dir / 'accuracy_by_graph_level.png')
 
     if args.skip_strategies:
+        # Empty placeholders so save_results can still write the manifest etc.
         strategy_results = {}
         for mk in loaded.active:
             for s in PROMPTING_STRATEGIES:

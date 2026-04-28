@@ -1,14 +1,9 @@
-"""Plotting utilities for the benchmark and evaluation results."""
-
-from __future__ import annotations
-
-from pathlib import Path
+"""Plots for the benchmark and evaluation results."""
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from matplotlib.figure import Figure
 
 from .config import (
     AT_CHANCE_MODELS,
@@ -21,8 +16,7 @@ from .config import (
 from .graphs import CAUSAL_GRAPHS
 
 
-def plot_benchmark_stats(benchmark: list[dict], output_path: Path | None = None) -> Figure:
-    """Three-panel: count by graph×level, level pie, answer distribution."""
+def plot_benchmark_stats(benchmark, output_path=None):
     df = pd.DataFrame(benchmark)
     ct = pd.crosstab(df['graph'], df['level'])[['L1', 'L2', 'L3']]
 
@@ -54,12 +48,8 @@ def plot_benchmark_stats(benchmark: list[dict], output_path: Path | None = None)
     return fig
 
 
-def plot_accuracy_heatmap(
-    detailed_acc: dict,
-    active_models: dict,
-    output_path: Path | None = None,
-) -> Figure:
-    """One heatmap per model: rows = levels, cols = graph types."""
+def plot_accuracy_heatmap(detailed_acc, active_models, output_path=None):
+    """One heatmap per model: rows = levels, columns = graph types."""
     n = len(active_models)
     fig, axes = plt.subplots(1, max(n, 1), figsize=(6 * n, 5))
     if n == 1:
@@ -68,24 +58,24 @@ def plot_accuracy_heatmap(
     graph_types = list(CAUSAL_GRAPHS.keys())
     levels = ['L1', 'L2', 'L3']
 
-    for ax, model_key in zip(axes, active_models):
+    for ax, mk in zip(axes, active_models):
         data = np.zeros((len(levels), len(graph_types)))
         for i, lv in enumerate(levels):
             for j, gt in enumerate(graph_types):
-                data[i, j] = detailed_acc[model_key].get(lv, {}).get(gt, 0)
+                data[i, j] = detailed_acc[mk].get(lv, {}).get(gt, 0)
         sns.heatmap(
             data, annot=True, fmt='.0%', cmap='RdYlGn', vmin=0, vmax=1,
             xticklabels=graph_types, yticklabels=levels,
             ax=ax, cbar_kws={'shrink': 0.8},
         )
-        ax.set_title(MODEL_LABELS[model_key], fontweight='bold')
+        ax.set_title(MODEL_LABELS[mk], fontweight='bold')
         ax.set_xlabel('Causal Graph Type')
 
     axes[0].set_ylabel('Reasoning Level')
     plt.suptitle('Accuracy by Graph Type and Reasoning Level (Zero-Shot)',
                  fontsize=14, fontweight='bold', y=1.02)
     fig.text(0.01, -0.04,
-             'GPT-2 models use raw-generation scoring (large prior range); '
+             'GPT-2 uses raw-generation scoring (large prior range); '
              'instruct models use PMI-debiased scoring. Cross-model bars are not '
              'directly comparable.',
              fontsize=8, color='#555555')
@@ -95,52 +85,48 @@ def plot_accuracy_heatmap(
     return fig
 
 
-def plot_strategy_comparison(
-    strategy_results: dict,
-    active_models: dict,
-    output_path: Path | None = None,
-) -> Figure:
-    """Two-panel bar chart: overall acc, then L2-only acc, by strategy."""
-    fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+def _bars(ax, getter, active_models, title):
     x = np.arange(len(PROMPTING_STRATEGIES))
     width = 0.25
+    for i, mk in enumerate(active_models):
+        vals = [getter(mk, s) for s in PROMPTING_STRATEGIES]
+        is_chance = mk in AT_CHANCE_MODELS
+        ax.bar(
+            x + i * width, vals, width,
+            label=(MODEL_LABELS[mk] + ' (at chance)') if is_chance else MODEL_LABELS[mk],
+            color='#999999' if is_chance else MODEL_COLORS[mk],
+            alpha=0.55 if is_chance else 0.85,
+            hatch='///' if is_chance else None,
+            edgecolor='white',
+        )
+    ax.set_ylabel('Accuracy')
+    ax.set_title(title, fontweight='bold')
+    ax.set_xticks(x + width)
+    ax.set_xticklabels([STRATEGY_LABELS[s] for s in PROMPTING_STRATEGIES])
+    ax.axhline(y=0.25, color='gray', linestyle='--', alpha=0.5)
+    ax.set_ylim(0, 1)
+    ax.grid(axis='y', alpha=0.3)
+    ax.legend(fontsize=8)
 
-    def _draw(ax, getter, title):
-        for i, mk in enumerate(active_models):
-            vals = [getter(mk, s) for s in PROMPTING_STRATEGIES]
-            is_chance = mk in AT_CHANCE_MODELS
-            ax.bar(
-                x + i * width, vals, width,
-                label=(MODEL_LABELS[mk] + ' (at chance)') if is_chance else MODEL_LABELS[mk],
-                color='#999999' if is_chance else MODEL_COLORS[mk],
-                alpha=0.55 if is_chance else 0.85,
-                hatch='///' if is_chance else None,
-                edgecolor='white',
-            )
-        ax.set_ylabel('Accuracy')
-        ax.set_title(title, fontweight='bold')
-        ax.set_xticks(x + width)
-        ax.set_xticklabels([STRATEGY_LABELS[s] for s in PROMPTING_STRATEGIES])
-        ax.axhline(y=0.25, color='gray', linestyle='--', alpha=0.5)
-        ax.set_ylim(0, 1)
-        ax.grid(axis='y', alpha=0.3)
-        ax.legend(fontsize=8)
 
-    _draw(
-        axes[0],
-        lambda mk, s: strategy_results[(mk, s)]['accuracy'],
-        'Overall Accuracy by Prompting Strategy',
-    )
-    _draw(
-        axes[1],
-        lambda mk, s: strategy_results[(mk, s)]['by_level']['L2'],
-        'L2 (Intervention) Accuracy by Prompting Strategy',
-    )
+def plot_strategy_comparison(strategy_results, active_models, output_path=None):
+    """Two panels: overall accuracy, then L2-only accuracy, by strategy."""
+    fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+
+    _bars(axes[0],
+          lambda mk, s: strategy_results[(mk, s)]['accuracy'],
+          active_models,
+          'Overall Accuracy by Prompting Strategy')
+
+    _bars(axes[1],
+          lambda mk, s: strategy_results[(mk, s)]['by_level']['L2'],
+          active_models,
+          'L2 (Intervention) Accuracy by Prompting Strategy')
 
     axes[0].text(
         0.01, -0.22,
-        'GPT-2 Small uses raw-generation log-prob; others use PMI-debiased. '
-        'GPT-2 bars are greyed/hatched — debiased 95% CIs include chance (25%).',
+        'GPT-2 uses raw-generation log-prob; others use PMI-debiased. '
+        'GPT-2 bars are greyed/hatched -- debiased 95% CIs include chance (25%).',
         transform=axes[0].transAxes, fontsize=7, color='#555555',
     )
 

@@ -1,10 +1,7 @@
-"""Per-model evaluation loop with PMI / generation-fallback scoring routing."""
-
-from __future__ import annotations
+"""Evaluation loop: pick a scoring mode per (model, strategy), then score every q."""
 
 import math
 
-import torch
 from tqdm.auto import tqdm
 
 from .config import MAX_SEQ_LEN, MODEL_LABELS, MODEL_MAX_SEQ_LEN
@@ -15,20 +12,21 @@ from .scoring import (
     score_answer_logprob,
 )
 
-# PMI calibration thresholds (in log-prob units).
-_DEGEN_RANGE = 1e-5     # priors fully collapsed -> generation fallback
-_RAW_RANGE = 1e-2       # priors effectively uniform -> skip PMI subtraction
-_LARGE_PRIOR = 2.5      # base LMs with this much prior bias -> generation
+
+# Calibration thresholds (log-prob units).
+_DEGEN_RANGE = 1e-5      # priors collapsed -> generation
+_RAW_RANGE = 1e-2        # priors uniform -> skip PMI subtraction (no-op)
+_LARGE_PRIOR = 2.5       # base LMs above this need generation, not PMI
 _SMALL_BASE = {'gpt2_small', 'gpt2_large'}
 
 
-def _pick_scoring_mode(priors: dict[str, float], model_key: str) -> tuple[str, str | None]:
-    """Decide how to score this (model, strategy): pmi / raw / generation."""
+def _pick_scoring_mode(priors, model_key):
     values = list(priors.values())
     if any(v != v for v in values):
         return 'generation', 'NaN calibration priors'
     if not all(math.isfinite(v) for v in values):
         return 'generation', 'non-finite calibration priors'
+
     rng = max(values) - min(values)
     if rng < _DEGEN_RANGE:
         return 'generation', f'priors fully collapsed (range={rng:.2e})'
@@ -39,7 +37,7 @@ def _pick_scoring_mode(priors: dict[str, float], model_key: str) -> tuple[str, s
     return 'pmi_logprob', None
 
 
-def _format_prior(v: float) -> str:
+def _format_prior(v):
     if v != v:
         return 'nan'
     if not math.isfinite(v):
@@ -47,24 +45,8 @@ def _format_prior(v: float) -> str:
     return f'{v:.6f}'
 
 
-def evaluate_model(
-    model_key: str,
-    questions: list[dict],
-    strategy: str,
-    models: dict,
-    tokenizers: dict,
-    device: torch.device,
-    verbose: bool = True,
-) -> tuple[list[dict], float]:
+def evaluate_model(model_key, questions, strategy, models, tokenizers, device, verbose=True):
     """Score every question for one (model, strategy) pair.
-
-    Routing logic for scoring mode:
-      pmi_logprob  - default. Subtracts content-free prior from raw logprob.
-      raw_logprob  - prior is effectively uniform; subtraction is just noise.
-      generation   - greedy decode and extract first A/B/C/D letter
-                     (used when priors are NaN/collapsed, or when a base LM
-                     has a prior range so large that PMI's linear correction
-                     can't undo the nonlinear softmax bias).
 
     Returns (per-question result dicts, accuracy).
     """
@@ -78,19 +60,19 @@ def evaluate_model(
 
     if verbose:
         prior_str = ', '.join(f'{k}={_format_prior(v)}' for k, v in priors.items())
-        rng = max(priors.values()) - min(priors.values()) if all(math.isfinite(v) for v in priors.values()) else float('nan')
-        rng_str = f' | range={rng:.2e}' if math.isfinite(rng) else ''
-        print(f'  Calibration priors ({strategy}): {prior_str}{rng_str}')
+        if all(math.isfinite(v) for v in priors.values()):
+            rng = max(priors.values()) - min(priors.values())
+            prior_str += f' | range={rng:.2e}'
+        print(f'  Calibration priors ({strategy}): {prior_str}')
         print(f'  Scoring mode: {mode}' + (f'  ({reason})' if reason else ''))
 
     use_generation = (mode == 'generation')
-    # In raw_logprob mode, calibration is a no-op (subtract zeros).
+    # In raw_logprob mode the calibration is a no-op (subtract zeros).
     calibration = priors if mode == 'pmi_logprob' else {k: 0.0 for k in priors}
 
-    results: list[dict] = []
+    results = []
     correct = 0
-    label = MODEL_LABELS.get(model_key, model_key)
-    desc = f'{label} [{strategy}]'
+    desc = f'{MODEL_LABELS.get(model_key, model_key)} [{strategy}]'
 
     for q in tqdm(questions, desc=desc, leave=False):
         prompt = formatter(q)
