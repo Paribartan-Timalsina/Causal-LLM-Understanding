@@ -40,6 +40,50 @@ Four canonical causal structures × three reasoning levels × 20 questions = 240
 | L2 | Intervention | P(Y \| do(X)) - manipulation |
 | L3 | Counterfactual | P(Y_x \| X′,Y′) - would-have-been |
 
+## Summary of findings
+
+Numbers below come from a single full run on a Kaggle T4 GPU.
+ 
+**Zero-shot accuracy on the full 240-question benchmark:**
+
+| Model | L1 (Assoc) | L2 (Interv) | L3 (Counter) |
+|---|---:|---:|---:|
+| GPT-2 Small (124M)     | 21% | 29% | 24% |
+| GPT-2 Large (774M)     | 21% | 20% | 25% |
+| Qwen2.5-1.5B-Instruct  | **72%** | 58% | 64% |
+| Llama-3.2-3B-Instruct  | 70% | 51% | 65% |
+| Gemma-2-2B-it          | 60% | 35% | 50% |
+| *Random baseline*      | *25%* | *25%* | *25%* |
+
+**Prompting strategy comparison (overall, 120-question subset, best in bold):**
+
+| Model | Zero-Shot | Few-Shot | CoT | Causal Chain |
+|---|---:|---:|---:|---:|
+| GPT-2 Small (at chance)    | 22% | **25%** | 20% | 23% |
+| GPT-2 Large (at chance)    | 23% | **27%** | 19% | 18% |
+| Qwen2.5-1.5B-Instruct      | 66% | **70%** | 67% | 43% |
+| Llama-3.2-3B-Instruct      | 64% | **66%** | 61% | 58% |
+| Gemma-2-2B-it              | 53% | **69%** | 56% | 31% |
+| *Random baseline*          | *25%* | *25%* | *25%* | *25%* |
+
+1. **Both GPT-2 models are at chance.** Their debiased 95% CIs include 25%. They predict a single letter on most questions (GPT-2 Small picks `A` on 67% of prompts; GPT-2 Large picks `C` or `D` on 93%). Treat them as a calibration baseline, not a reasoning result.
+
+2. **L2 (Intervention) is harder than L3 (Counterfactual) for every instruct model.** Pearl's hierarchy predicts L1 < L2 < L3 in difficulty; we see the opposite at L2/L3. The drop from L1 to L2 is 15-25 percentage points and is partially recovered at L3. Plausible reading: the L3 questions provide richer scenario-grounded narratives, while bare `do(X)` framing pulls the model into associational shortcuts.
+
+3. **Collider ("explaining away") is universally the hardest graph.** Average accuracy across L1/L2/L3:
+
+   | Model | chain | fork | **collider** | diamond |
+   |---|---:|---:|---:|---:|
+   | Qwen   | 82% | 85% | **35%** | 57% |
+   | Llama  | 92% | 65% | **13%** | 78% |
+   | Gemma  | 63% | 48% | **23%** | 58% |
+
+   Llama scores 0% on L3 + collider. Models recognize directed-influence chains but fail at conditioning-on-effect reasoning, which is the textbook hard case.
+
+4. **Few-shot helps everywhere; "Causal Chain" prompting often hurts.** Few-shot is the only strategy that improves every instruct model (Gemma jumps +17pp). Chain-of-thought is roughly neutral. The Causal Chain template collapses Qwen by -22pp and Gemma by -22pp - the long structured prompt skews the letter prior so heavily that PMI can't undo it ("prior collapse").
+
+5. **Llama vs Qwen flip on graph type.** Llama (3.2B) is bigger but lower overall zero-shot than Qwen (1.5B). Llama dominates chain (92%) and diamond (78%); Qwen dominates fork (85%) and is roughly 2x better on collider (35% vs 13%). Qwen is the more balanced generalist on this benchmark.
+
 ## Install
 
 ```bash
@@ -68,48 +112,6 @@ python -m scripts.run --skip-strategies
 # Full benchmark for strategy comparison (240 questions instead of 120)
 python -m scripts.run --strategy-bucket 20
 ```
-
-## Outputs
-
-Written to `output_llm/` (or `--output-dir`):
-
-| File | Contents |
-|---|---|
-| `results_summary.json` | Machine-readable: zero-shot accuracy, per-graph breakdown, per-strategy accuracy |
-| `zero_shot_accuracy.csv` | Model × level |
-| `strategy_accuracy.csv` | Model × strategy × level |
-| `detailed_accuracy.csv` | Model × level × graph |
-| `raw_predictions.jsonl` | Per-question rows for both zero-shot and strategy runs |
-| `accuracy_by_graph_level.png` | Heatmap |
-| `prompting_strategy_comparison.png` | Bar charts |
-| `causal_graphs.png`, `benchmark_stats.png` | Reference figures |
-| `run_manifest.json` | Versions, GPU, seed, timestamp |
-
-## Layout
-
-```
-causal_llm/
-  config.py         # Model configs, paths, seed, prompting strategies
-  graphs.py         # CAUSAL_GRAPHS dict + plot_causal_graphs
-  scenarios.py      # Realistic story templates per graph type
-  benchmark.py      # make_question, build_benchmark
-  models.py         # HF auth + load_models with 4-bit NF4
-  prompts.py        # Four prompt formatters + content-free prompts
-  scoring.py        # Forced-completion log-prob + calibration priors
-  evaluator.py      # Per-(model,strategy) eval loop with PMI / generation routing
-  visualization.py  # Heatmap and bar-chart plots
-  reporting.py      # JSON / CSV / JSONL serialization
-scripts/run.py      # CLI entry point
-tests/              # Smoke tests for benchmark + prompts (no GPU needed)
-```
-
-## Testing
-
-```bash
-python -m pytest tests/ -v
-```
-
-The included tests are CPU-only (benchmark generation, fingerprinting, prompt formatting). Model evaluation is exercised via `python -m scripts.run`.
 
 ## Notes on scoring
 
