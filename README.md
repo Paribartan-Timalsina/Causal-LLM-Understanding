@@ -66,9 +66,37 @@ Numbers below come from a single full run on a Kaggle T4 GPU.
 | Gemma-2-2B-it              | 53% | **69%** | 56% | 31% |
 | *Random baseline*          | *25%* | *25%* | *25%* | *25%* |
 
-1. **Both GPT-2 models are at chance.** Their debiased 95% CIs include 25%. They predict a single letter on most questions (GPT-2 Small picks `A` on 67% of prompts; GPT-2 Large picks `C` or `D` on 93%). Treat them as a calibration baseline, not a reasoning result.
+### Robustness checks
 
-2. **L2 (Intervention) is harder than L3 (Counterfactual) for every instruct model.** Pearl's hierarchy predicts L1 < L2 < L3 in difficulty; we see the opposite at L2/L3. The drop from L1 to L2 is 15-25 percentage points and is partially recovered at L3. Plausible reading: the L3 questions provide richer scenario-grounded narratives, while bare `do(X)` framing pulls the model into associational shortcuts.
+Two confounds remained in the headline numbers above; we re-ran zero-shot to verify they survive.
+
+**Permutation averaging.** Each of 120 questions (40 per level) re-scored with all four cyclic permutations of A/B/C/D so the correct answer hits each position exactly once. Per-question accuracy is the mean of the four passes. Bootstrap 95% CIs computed over the resulting per-question scores (n_iter=2000).
+
+| Model | L1 | L2 | L3 |
+|---|:---:|:---:|:---:|
+| GPT-2 Small (124M)  | 24% [23, 25] | 27% [24, 29] | 24% [23, 25] |
+| GPT-2 Large (774M)  | 24% [23, 26] | 28% [24, 31] | 23% [20, 26] |
+| Qwen2.5-1.5B-Inst   | 71% [59, 83] | 52% [39, 64] | 54% [43, 66] |
+| Llama-3.2-3B-Inst   | 73% [61, 85] | 50% [39, 61] | 67% [53, 79] |
+| Gemma-2-2B-it       | 58% [48, 67] | 39% [29, 50] | 46% [38, 54] |
+
+All six GPT-2 cells have CIs that include 25% (formally at chance). Every instruct-model cell sits well above chance, including L2. Letter-position bias residue ranged from 0pp (Llama) to 11pp (Gemma L3) - Llama is the most stable.
+
+**Real-generation Chain-of-Thought.** PMI-CoT scores an answer letter against a CoT template; the model never actually produces a chain. We re-ran the three instruct models on the same 120-question subset, generating ~250 tokens and parsing the answer letter from the output.
+
+| Model | PMI-CoT | Gen-CoT | 95% CI (gen) | Δ |
+|---|---:|---:|:---:|---:|
+| Qwen2.5-1.5B  | 67% | 60% | [52, 68] | -7pp |
+| Llama-3.2-3B  | 61% | 62% | [53, 70] | +1pp |
+| Gemma-2-2B    | 56% | 63% | [54, 72] | +7pp |
+
+PMI-CoT and Gen-CoT roughly agree on aggregate. Per-model effects differ: Qwen marginally loses, Llama unchanged, Gemma gains.
+
+### Findings
+
+1. **Both GPT-2 models are at chance.** Permutation-averaged 95% CIs include 25% on every level. They predict a single letter on most questions (GPT-2 Small picks `A` on 67% of prompts; GPT-2 Large picks `C` or `D` on 93%). Treat them as a calibration baseline, not a reasoning result.
+
+2. **L2 (Intervention) is harder than L3 (Counterfactual) for every instruct model.** Pearl's hierarchy predicts L1 < L2 < L3 in difficulty; we see the opposite at L2/L3. The drop from L1 to L2 is 15-25pp under permutation averaging, partially recovered at L3. The CIs for L1 and L2 do not overlap for Qwen or Llama, so the gap is statistically real. Plausible reading: L3 questions provide richer scenario-grounded narratives that anchor reasoning, while bare `do(X)` framing pulls the model toward associational shortcuts.
 
 3. **Collider ("explaining away") is universally the hardest graph.** Average accuracy across L1/L2/L3:
 
@@ -80,7 +108,7 @@ Numbers below come from a single full run on a Kaggle T4 GPU.
 
    Llama scores 0% on L3 + collider. Models recognize directed-influence chains but fail at conditioning-on-effect reasoning, which is the textbook hard case.
 
-4. **Few-shot helps everywhere; "Causal Chain" prompting often hurts.** Few-shot is the only strategy that improves every instruct model (Gemma jumps +17pp). Chain-of-thought is roughly neutral. The Causal Chain template collapses Qwen by -22pp and Gemma by -22pp - the long structured prompt skews the letter prior so heavily that PMI can't undo it ("prior collapse").
+4. **Few-shot helps everywhere; "Causal Chain" prompting often hurts; CoT depends on the model.** Few-shot is the only strategy that improves every instruct model (Gemma jumps +17pp). PMI-CoT is roughly neutral on aggregate, and real-generation CoT confirms this on average but with per-model variation (Qwen -7pp, Llama +1pp, Gemma +7pp). The Causal Chain template collapses Qwen by -22pp and Gemma by -22pp - the long structured prompt skews the letter prior beyond what PMI can correct ("prior collapse").
 
 5. **Llama vs Qwen flip on graph type.** Llama (3.2B) is bigger but lower overall zero-shot than Qwen (1.5B). Llama dominates chain (92%) and diamond (78%); Qwen dominates fork (85%) and is roughly 2x better on collider (35% vs 13%). Qwen is the more balanced generalist on this benchmark.
 
