@@ -12,7 +12,14 @@ from .graphs import CAUSAL_GRAPHS
 
 
 def save_results(output_dir, benchmark, accuracy_matrix, detailed_acc,
-                 all_results, strategy_results, active_models, skipped_models, seed):
+                 all_results, strategy_results, active_models, skipped_models, seed,
+                 bootstrap_summary=None, gen_cot_results=None):
+    """Write summary JSON, per-evaluation CSVs, and per-question JSONLs.
+
+    `bootstrap_summary` and `gen_cot_results` are optional. When provided,
+    `permuted_accuracy.csv` / `gen_cot_accuracy.csv` / `gen_cot_chains.jsonl`
+    are written and the corresponding blocks are added to `results_summary.json`.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summary = {
@@ -37,6 +44,31 @@ def save_results(output_dir, benchmark, accuracy_matrix, detailed_acc,
             for mk in active_models for s in PROMPTING_STRATEGIES
         },
     }
+
+    if bootstrap_summary:
+        summary['permuted_accuracy'] = {
+            f'{mk}__{lv}': {
+                'mean': bootstrap_summary[(mk, lv)]['mean'],
+                'lo': bootstrap_summary[(mk, lv)]['lo'],
+                'hi': bootstrap_summary[(mk, lv)]['hi'],
+                'single_perm': bootstrap_summary[(mk, lv)]['single_perm'],
+                'n': bootstrap_summary[(mk, lv)]['n'],
+            }
+            for mk in active_models for lv in ['L1', 'L2', 'L3']
+            if (mk, lv) in bootstrap_summary
+        }
+
+    if gen_cot_results:
+        summary['gen_cot_accuracy'] = {
+            mk: {
+                'accuracy': r['accuracy'],
+                'ci': r['ci'],
+                'by_level': r['by_level'],
+                'extract_rate': r['extract_rate'],
+            }
+            for mk, r in gen_cot_results.items()
+        }
+
     _dump_json(output_dir / 'results_summary.json', summary)
 
     with open(output_dir / 'zero_shot_accuracy.csv', 'w', newline='') as f:
@@ -67,6 +99,32 @@ def save_results(output_dir, benchmark, accuracy_matrix, detailed_acc,
                                 detailed_acc[mk].get(lv, {}).get(gt, 0)])
     print('Saved', output_dir / 'detailed_accuracy.csv')
 
+    if bootstrap_summary:
+        with open(output_dir / 'permuted_accuracy.csv', 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['model', 'level', 'single_perm', 'permuted_mean',
+                        'ci_lo', 'ci_hi', 'n'])
+            for mk in active_models:
+                for lv in ['L1', 'L2', 'L3']:
+                    s = bootstrap_summary.get((mk, lv))
+                    if s is None:
+                        continue
+                    w.writerow([MODEL_LABELS[mk], lv, s['single_perm'], s['mean'],
+                                s['lo'], s['hi'], s['n']])
+        print('Saved', output_dir / 'permuted_accuracy.csv')
+
+    if gen_cot_results:
+        with open(output_dir / 'gen_cot_accuracy.csv', 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['model', 'accuracy', 'ci_lo', 'ci_hi',
+                        'L1', 'L2', 'L3', 'extract_rate'])
+            for mk, r in gen_cot_results.items():
+                ci = r['ci']
+                bl = r['by_level']
+                w.writerow([MODEL_LABELS[mk], r['accuracy'], ci['lo'], ci['hi'],
+                            bl['L1'], bl['L2'], bl['L3'], r['extract_rate']])
+        print('Saved', output_dir / 'gen_cot_accuracy.csv')
+
     rows = []
     for (mk, _lv), (results, _acc) in all_results.items():
         for r in results:
@@ -94,10 +152,31 @@ def save_results(output_dir, benchmark, accuracy_matrix, detailed_acc,
                 'correct_letter': r['answer'],
                 'correct': r['correct'],
             })
+    if gen_cot_results:
+        for mk, gr in gen_cot_results.items():
+            for r in gr['raw']:
+                rows.append({
+                    'source': 'gen_cot',
+                    'model': mk,
+                    'strategy': 'generation_cot',
+                    'qid': r['qid'],
+                    'graph': r['graph'],
+                    'level': r['level'],
+                    'prediction': r['prediction'],
+                    'correct_letter': r['gold'],
+                    'correct': r['correct'],
+                })
     with open(output_dir / 'raw_predictions.jsonl', 'w') as f:
         for row in rows:
             f.write(json.dumps(row, default=str) + '\n')
     print(f'Saved {len(rows)} rows to', output_dir / 'raw_predictions.jsonl')
+
+    if gen_cot_results:
+        with open(output_dir / 'gen_cot_chains.jsonl', 'w') as f:
+            for mk, gr in gen_cot_results.items():
+                for r in gr['raw']:
+                    f.write(json.dumps({**r, 'model': mk}, default=str) + '\n')
+        print('Saved', output_dir / 'gen_cot_chains.jsonl')
 
     manifest = {
         'seed': seed,

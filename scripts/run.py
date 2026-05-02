@@ -1,9 +1,10 @@
 """Run the full evaluation: build benchmark, load models, score, save results.
 
 Examples:
-    python -m scripts.run
+    python -m scripts.run                       # full pipeline (~3h on T4)
+    python -m scripts.run --skip-robustness     # zero-shot + strategies only (~75 min)
+    python -m scripts.run --skip-strategies --skip-robustness   # zero-shot only
     python -m scripts.run --models qwen_1_5b llama_3_3b
-    python -m scripts.run --skip-strategies
 """
 
 import argparse
@@ -16,6 +17,7 @@ import numpy as np
 import torch
 
 from causal_llm import (
+    DEFAULT_INSTRUCT_MODELS,
     MODEL_CONFIGS,
     MODEL_LABELS,
     OUTPUT_DIR,
@@ -24,12 +26,17 @@ from causal_llm import (
     STRATEGY_LABELS,
     benchmark_summary,
     build_benchmark,
+    compute_bootstrap_summary,
     evaluate_model,
     load_models,
+    permutation_averaged_zero_shot,
     plot_accuracy_heatmap,
     plot_benchmark_stats,
     plot_causal_graphs,
     plot_strategy_comparison,
+    print_gen_cot_comparison,
+    print_robustness_summary,
+    run_gen_cot,
     save_results,
     setup_hf_auth,
 )
@@ -47,11 +54,14 @@ def parse_args():
                         '(10 = 120 total, 20 = 240 = full benchmark)')
     p.add_argument('--seed', type=int, default=SEED)
     p.add_argument('--skip-strategies', action='store_true',
-                   help='only run zero-shot, skip the strategy sweep')
+                   help='skip the four-way prompting strategy comparison')
+    p.add_argument('--skip-robustness', action='store_true',
+                   help='skip permutation averaging + real-generation CoT ')
     return p.parse_args()
 
 
 def seed_everything(seed):
+    " Set random seeds for reproducibility."
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -65,6 +75,7 @@ def seed_everything(seed):
 
 
 def stratified_sample(benchmark, per_bucket):
+    """Sample a subset of questions stratified by (graph, level)."""
     by_cell = defaultdict(list)
     for q in benchmark:
         by_cell[(q['graph'], q['level'])].append(q)
@@ -144,6 +155,19 @@ def print_strategy_summary(active_models, strategy_results):
         print(row)
 
 
+def empty_strategy_placeholders(active_models):
+    """When --skip-strategies is set, save_results still expects this dict."""
+    placeholders = {}
+    for mk in active_models:
+        for s in PROMPTING_STRATEGIES:
+            placeholders[(mk, s)] = {
+                'accuracy': 0.0,
+                'results': [],
+                'by_level': {'L1': 0.0, 'L2': 0.0, 'L3': 0.0},
+            }
+    return placeholders
+
+
 def main():
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -162,8 +186,7 @@ def main():
     plot_causal_graphs(args.output_dir / 'causal_graphs.png')
     plot_benchmark_stats(benchmark, args.output_dir / 'benchmark_stats.png')
 
-    configs = {k: v for k, v in MODEL_CONFIGS.items() if k in args.models} \
-        if args.models else MODEL_CONFIGS
+    configs = {k: v for k, v in MODEL_CONFIGS.items() if k in args.models} if args.models else MODEL_CONFIGS
     loaded = load_models(device, configs=configs)
     if not loaded.models:
         print('No models loaded; aborting.', file=sys.stderr)
@@ -178,15 +201,7 @@ def main():
                           args.output_dir / 'accuracy_by_graph_level.png')
 
     if args.skip_strategies:
-        # Empty placeholders so save_results can still write the manifest etc.
-        strategy_results = {}
-        for mk in loaded.active:
-            for s in PROMPTING_STRATEGIES:
-                strategy_results[(mk, s)] = {
-                    'accuracy': 0.0,
-                    'results': [],
-                    'by_level': {'L1': 0.0, 'L2': 0.0, 'L3': 0.0},
-                }
+        strategy_results = empty_strategy_placeholders(loaded.active)
     else:
         sample = stratified_sample(benchmark, args.strategy_bucket)
         print(f'\nStrategy sample: {len(sample)} questions '
@@ -198,6 +213,40 @@ def main():
         plot_strategy_comparison(strategy_results, loaded.active,
                                  args.output_dir / 'prompting_strategy_comparison.png')
 
+    bootstrap_summary = None
+    gen_cot_results = None
+    if not args.skip_robustness:
+        # Re-use the same 120-question stratified subset as the strategy
+        # sweep so the comparison is same.
+        robustness_sample = stratified_sample(benchmark, 10)
+        print(f'\nRobustness sample: {len(robustness_sample)} questions '
+              f'x 4 letter permutations.')
+
+        permuted = permutation_averaged_zero_shot(
+            loaded.active, loaded.models, loaded.tokenizers,
+            robustness_sample, device,
+        )
+
+        def _baseline(mk, level):
+            # If the strategy sweep ran on the same subset, use its zero-shot
+            # row as the single-perm baseline. Otherwise fall back to 0.
+            if args.skip_strategies:
+                return 0.0
+            return strategy_results.get((mk, 'zero_shot'), {}).get(
+                'by_level', {}).get(level, 0.0)
+
+        bootstrap_summary = compute_bootstrap_summary(permuted, _baseline)
+        print_robustness_summary(loaded.active, bootstrap_summary)
+
+        instruct_active = [m for m in DEFAULT_INSTRUCT_MODELS if m in loaded.active]
+        if instruct_active:
+            gen_cot_results = run_gen_cot(
+                loaded.active, loaded.models, loaded.tokenizers,
+                robustness_sample, device, instruct_only=True,
+            )
+            if not args.skip_strategies:
+                print_gen_cot_comparison(gen_cot_results, strategy_results)
+
     save_results(
         output_dir=args.output_dir,
         benchmark=benchmark,
@@ -208,6 +257,8 @@ def main():
         active_models=loaded.active,
         skipped_models=loaded.skipped,
         seed=args.seed,
+        bootstrap_summary=bootstrap_summary,
+        gen_cot_results=gen_cot_results,
     )
     return 0
 

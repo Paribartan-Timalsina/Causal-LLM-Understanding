@@ -4,12 +4,12 @@ Systematic evaluation of causal reasoning in five LLMs (124M to 3.2B params) acr
 
 ## What it does
 
-For each (model × graph × level × prompting strategy) combination, the pipeline:
+The pipeline:
 
-1. Generates a 240-question multiple-choice benchmark with PMI-debiased ground-truth answers
-2. Loads each model (4-bit NF4 for instruct models on GPU)
-3. Scores each answer letter via forced-completion log-probability with content-free PMI calibration
-4. Reports accuracy by graph type and reasoning level + a four-way prompting-strategy comparison
+1. Generates a 240-question multiple-choice benchmark covering the four canonical causal graphs (chain / fork / collider / diamond) at each of Pearl's three reasoning levels (L1 / L2 / L3). Choice labels are shuffled per question so the correct answer is uniformly distributed over A/B/C/D.
+2. Loads each model (4-bit NF4 quantization for the instruction-tuned models, FP32 for the GPT-2 baselines).
+3. Scores each candidate answer letter using forced-completion log-probability, then debiases the score by subtracting the model's letter prior measured against an N/A content-free prompt (PMI calibration).
+4. Reports zero-shot accuracy broken down by reasoning level and graph type, plus a four-way prompting-strategy comparison.
 
 ## Models evaluated
 
@@ -25,7 +25,7 @@ Llama and Gemma are license-gated; set `HF_TOKEN` (env var, Kaggle Secret, or Co
 
 ## Benchmark
 
-Four canonical causal structures × three reasoning levels × 20 questions = 240 prompts. Choice labels are permuted per question to defeat letter-frequency priors.
+Four canonical causal structures × three reasoning levels × 20 questions = 240 prompts. Choice labels are shuffled per question so the correct answer letter is roughly uniformly distributed across A/B/C/D (this prevents a model from getting a high score by always guessing one letter).
 
 | Structure | Graph | Key property |
 |---|---|---|
@@ -42,8 +42,8 @@ Four canonical causal structures × three reasoning levels × 20 questions = 240
 
 ## Summary of findings
 
-Numbers below come from a single full run on a Kaggle T4 GPU.
- 
+All numbers below come from a single seeded run (seed = 42) on a Kaggle T4 GPU. The headline tables in this section use the full 240-question benchmark; the robustness section uses a 120-question stratified subset (40 per reasoning level) so the permutation-averaging budget stays manageable.
+
 **Zero-shot accuracy on the full 240-question benchmark:**
 
 | Model | L1 (Assoc) | L2 (Interv) | L3 (Counter) |
@@ -68,21 +68,21 @@ Numbers below come from a single full run on a Kaggle T4 GPU.
 
 ### Robustness checks
 
-Two confounds remained in the headline numbers above; we re-ran zero-shot to verify they survive.
+The headline numbers above are from a single letter ordering and a single point estimate per cell. Two confounds remain to address.
 
-**Permutation averaging.** Each of 120 questions (40 per level) re-scored with all four cyclic permutations of A/B/C/D so the correct answer hits each position exactly once. Per-question accuracy is the mean of the four passes. Bootstrap 95% CIs computed over the resulting per-question scores (n_iter=2000).
+**Permutation averaging.** A 120-question stratified subset (40 per reasoning level) was re-scored with all four cyclic permutations of A/B/C/D so the correct answer hits each position exactly once across the four passes. Per-question accuracy is the mean over the four passes. Bootstrap 95% CIs (n_iter=2000) are computed over the resulting per-question scores.
 
 | Model | L1 | L2 | L3 |
 |---|:---:|:---:|:---:|
 | GPT-2 Small (124M)  | 24% [23, 25] | 27% [24, 29] | 24% [23, 25] |
-| GPT-2 Large (774M)  | 24% [23, 26] | 28% [24, 31] | 23% [20, 26] |
+| GPT-2 Large (774M)  | 24% [22, 26] | 28% [24, 31] | 23% [20, 26] |
 | Qwen2.5-1.5B-Inst   | 71% [59, 83] | 52% [39, 64] | 54% [43, 66] |
 | Llama-3.2-3B-Inst   | 73% [61, 85] | 50% [39, 61] | 67% [53, 79] |
-| Gemma-2-2B-it       | 58% [48, 67] | 39% [29, 50] | 46% [38, 54] |
+| Gemma-2-2B-it       | 57% [48, 67] | 39% [29, 50] | 46% [38, 54] |
 
-All six GPT-2 cells have CIs that include 25% (formally at chance). Every instruct-model cell sits well above chance, including L2. Letter-position bias residue ranged from 0pp (Llama) to 11pp (Gemma L3) - Llama is the most stable.
+All six GPT-2 cells have CIs that include 25%, formally placing them at chance. Every instruct-model cell sits above chance, including L2. The drop from single-perm to perm-averaged accuracy (the residual letter-position bias) was at most 5pp for Llama and GPT-2, 11pp for Qwen and Gemma — i.e., Llama's headline numbers were the most honest, while Qwen's and Gemma's were inflated by ~10pp of position bias.
 
-**Real-generation Chain-of-Thought.** PMI-CoT scores an answer letter against a CoT template; the model never actually produces a chain. We re-ran the three instruct models on the same 120-question subset, generating ~250 tokens and parsing the answer letter from the output.
+**Real-generation Chain-of-Thought.** The CoT row in the strategy table above scores the answer letter against a CoT-flavored prompt template, but the model never actually produces a chain. To check whether real reasoning matches the PMI signal, we re-ran the three instruct models on the same 120-question subset, generating ~250 tokens per question and parsing the answer letter from the output.
 
 | Model | PMI-CoT | Gen-CoT | 95% CI (gen) | Δ |
 |---|---:|---:|:---:|---:|
@@ -90,15 +90,15 @@ All six GPT-2 cells have CIs that include 25% (formally at chance). Every instru
 | Llama-3.2-3B  | 61% | 62% | [53, 70] | +1pp |
 | Gemma-2-2B    | 56% | 63% | [54, 72] | +7pp |
 
-PMI-CoT and Gen-CoT roughly agree on aggregate. Per-model effects differ: Qwen marginally loses, Llama unchanged, Gemma gains.
+Aggregate accuracy is similar between the two methods (about +0.3pp average), but per-model effects differ: Qwen marginally loses with real generation, Llama is unchanged, Gemma gains. None of these per-model deltas exceed the 95% CI half-width (~10pp), so individually they are weak signals; the consistent pattern across three models is more interesting than any one delta.
 
 ### Findings
 
-1. **Both GPT-2 models are at chance.** Permutation-averaged 95% CIs include 25% on every level. They predict a single letter on most questions (GPT-2 Small picks `A` on 67% of prompts; GPT-2 Large picks `C` or `D` on 93%). Treat them as a calibration baseline, not a reasoning result.
+1. **Both GPT-2 models are at chance.** Their permutation-averaged 95% CIs include 25% at every reasoning level. The behavior is consistent with letter-prior guessing: GPT-2 Small predicts `A` on 67% of prompts, GPT-2 Large predicts `C` or `D` on 93%. They function as a calibration baseline, not as evidence of causal reasoning.
 
-2. **L2 (Intervention) is harder than L3 (Counterfactual) for every instruct model.** Pearl's hierarchy predicts L1 < L2 < L3 in difficulty; we see the opposite at L2/L3. The drop from L1 to L2 is 15-25pp under permutation averaging, partially recovered at L3. The CIs for L1 and L2 do not overlap for Qwen or Llama, so the gap is statistically real. Plausible reading: L3 questions provide richer scenario-grounded narratives that anchor reasoning, while bare `do(X)` framing pulls the model toward associational shortcuts.
+2. **L2 (Intervention) is harder than L3 (Counterfactual) for every instruction-tuned model.** Pearl's hierarchy is usually framed as a tower of *expressivity* (L3 questions cannot be answered by L2-only knowledge, etc.), and people often expect *difficulty* to track that ordering. We observe the opposite at L2 vs L3: every instruct model drops 15-25pp from L1 to L2, then partially recovers at L3. The L1-vs-L2 95% CIs do not overlap for Qwen or Llama, so the L1 > L2 gap is statistically robust. Plausible reading: L3 questions provide observed pre-state information (e.g., "we observed X=low and Z=low") which anchors reasoning, whereas bare `do(X)` framing offers no anchor and pulls the model toward associational shortcuts.
 
-3. **Collider ("explaining away") is universally the hardest graph.** Average accuracy across L1/L2/L3:
+3. **Collider is universally the hardest graph.** Average accuracy across L1/L2/L3 (zero-shot, full benchmark):
 
    | Model | chain | fork | **collider** | diamond |
    |---|---:|---:|---:|---:|
@@ -106,11 +106,11 @@ PMI-CoT and Gen-CoT roughly agree on aggregate. Per-model effects differ: Qwen m
    | Llama  | 92% | 65% | **13%** | 78% |
    | Gemma  | 63% | 48% | **23%** | 58% |
 
-   Llama scores 0% on L3 + collider. Models recognize directed-influence chains but fail at conditioning-on-effect reasoning, which is the textbook hard case.
+   Llama scores 0% on L3 + collider specifically. The collider questions test whether the model can recognize that two variables sharing a common effect (X → M ← Z) are *not* causally related to each other - even though they're correlated when M is held fixed. Failure suggests the model is using surface co-occurrence as a proxy for causation rather than reasoning about the directed graph.
 
-4. **Few-shot helps everywhere; "Causal Chain" prompting often hurts; CoT depends on the model.** Few-shot is the only strategy that improves every instruct model (Gemma jumps +17pp). PMI-CoT is roughly neutral on aggregate, and real-generation CoT confirms this on average but with per-model variation (Qwen -7pp, Llama +1pp, Gemma +7pp). The Causal Chain template collapses Qwen by -22pp and Gemma by -22pp - the long structured prompt skews the letter prior beyond what PMI can correct ("prior collapse").
+4. **Few-shot helps every instruct model; "Causal Chain" prompting collapses two of three.** Few-shot is the only strategy that improves all three instruct models over their zero-shot baseline (Gemma jumps +17pp). PMI-scored CoT is roughly neutral on aggregate, and real-generation CoT confirms this on average with per-model variation (Qwen -7pp, Llama +1pp, Gemma +7pp). The "Causal Chain" template - which asks the model to first identify the graph structure, then answer - produces a -22pp accuracy drop for both Qwen and Gemma. We attribute this to prior collapse: the long structured prompt shifts the model's letter prior so far that PMI's linear correction cannot fully undo the resulting softmax distortion.
 
-5. **Llama vs Qwen flip on graph type.** Llama (3.2B) is bigger but lower overall zero-shot than Qwen (1.5B). Llama dominates chain (92%) and diamond (78%); Qwen dominates fork (85%) and is roughly 2x better on collider (35% vs 13%). Qwen is the more balanced generalist on this benchmark.
+5. **Llama and Qwen disagree on which graph types they handle best.** Llama (3.2B) is bigger than Qwen (1.5B) but has lower aggregate zero-shot accuracy. Llama dominates chain (92%) and diamond (78%) but collapses on collider (13%); Qwen is more uniform - it leads on fork (85%) and is 2.7x better than Llama on collider (35% vs 13%). On this benchmark Qwen is the more balanced generalist.
 
 ## Install
 
@@ -125,8 +125,15 @@ Python ≥3.9, PyTorch ≥2.0. CUDA GPU strongly recommended (~16 GB VRAM for th
 ## Run
 
 ```bash
-# Full evaluation (all 5 models, ~75 min on T4)
+# Full pipeline: zero-shot + 4 prompting strategies + permutation averaging
+# + real-generation CoT (~3h on T4)
 python -m scripts.run
+
+# Skip the robustness checks (zero-shot + strategies only, ~75 min)
+python -m scripts.run --skip-robustness
+
+# Skip the strategy comparison too (zero-shot only)
+python -m scripts.run --skip-strategies --skip-robustness
 
 # Subset of models
 python -m scripts.run --models qwen_1_5b llama_3_3b
@@ -134,15 +141,32 @@ python -m scripts.run --models qwen_1_5b llama_3_3b
 # Custom output directory
 python -m scripts.run --output-dir runs/v1
 
-# Skip strategy comparison (zero-shot only)
-python -m scripts.run --skip-strategies
-
-# Full benchmark for strategy comparison (240 questions instead of 120)
+# Use the full benchmark for strategy comparison (240 questions instead of 120)
 python -m scripts.run --strategy-bucket 20
 ```
 
+The notebook `Causal_LLM_Understanding.ipynb` runs the same pipeline interactively and is the easier entry point if you want to inspect intermediate results.
+
+## Outputs
+
+Written to `output_llm/`:
+
+| File | What |
+|---|---|
+| `results_summary.json` | All numbers above as a single JSON object |
+| `zero_shot_accuracy.csv` | Model × level (full benchmark) |
+| `strategy_accuracy.csv` | Model × strategy × level (subset) |
+| `detailed_accuracy.csv` | Model × level × graph |
+| `permuted_accuracy.csv` | Model × level: single-perm, perm-averaged mean, 95% CI bounds |
+| `gen_cot_accuracy.csv` | Per-model real-generation CoT accuracy + CI |
+| `raw_predictions.jsonl` | Per-question prediction record across every evaluation |
+| `gen_cot_chains.jsonl` | Full reasoning chains generated by each instruct model |
+| `accuracy_by_graph_level.png`, `prompting_strategy_comparison.png` | Plots |
+| `causal_graphs.png`, `benchmark_stats.png` | Reference figures |
+| `run_manifest.json` | Versions, GPU, seed, timestamp |
+
 ## Notes on scoring
 
-- **PMI calibration** subtracts the model's letter prior (measured against an N/A content-free prompt) from each raw log-prob to remove token-frequency bias.
-- **Generation fallback** kicks in when calibration priors are NaN/collapsed, or when a base LM has a prior range so wide that PMI's linear correction can't undo the nonlinear softmax bias (typical for GPT-2 Small/Large).
-- **GPT-2 results sit at chance** (debiased CIs include 25%) - they're a calibration baseline, not a reasoning result. Cross-model comparisons against them are not apples-to-apples.
+- **PMI calibration**: for each candidate answer letter, the score is `log P(letter | full prompt) − log P(letter | content-free prompt)`. The subtrahend is measured by replacing the scenario, question, and choices with "N/A" and scoring the four letters against that. This removes the model's letter-frequency prior so the calibrated score reflects the prompt content rather than which letter the model happens to like.
+- **Generation fallback**: when calibration priors are NaN, collapsed (range below 1e-5), or so wide that PMI's linear correction cannot undo the nonlinear softmax distortion (range above 2.5 log-prob units, typical for GPT-2), the evaluator switches to greedy decoding and parses the first A/B/C/D the model emits.
+- **GPT-2 numbers sit at chance**: their permutation-averaged 95% CIs all include 25%, so cross-model comparisons against them are not apples-to-apples. They are useful as a sanity floor (a model that does no causal reasoning should score here) and as a calibration check on the scoring pipeline (PMI does not lift them above chance, which is the right behavior).
