@@ -1,5 +1,4 @@
-# Can LLMs Reason Causally? Probing Causal Inference Across Pearl's Hierarchy
-
+# Can LLMs Reason Causally? 
 Systematic evaluation of causal reasoning in five LLMs (124M to 3.2B params) across the three levels of Pearl's causal hierarchy and four canonical graph structures.
 
 ## What it does
@@ -21,18 +20,16 @@ The pipeline:
 | Llama-3.2-3B-Instruct | 3.2B | Instruct | 4-bit NF4 |
 | Gemma-2-2B-it | 2.6B | Instruct | 4-bit NF4 |
 
-Llama and Gemma are license-gated; set `HF_TOKEN` (env var, Kaggle Secret, or Colab userdata).
-
 ## Benchmark
 
 Four canonical causal structures × three reasoning levels × 20 questions = 240 prompts. Choice labels are shuffled per question so the correct answer letter is roughly uniformly distributed across A/B/C/D (this prevents a model from getting a high score by always guessing one letter).
 
-| Structure | Graph | Key property |
-|---|---|---|
-| Chain | X → Y → Z | Mediation |
-| Fork | X ← C → Z | Common cause / confounding |
-| Collider | X → M ← Z | Explaining away |
-| Diamond | X → {Y,Z} → W | Multiple pathways |
+| Structure | Graph | 
+|---|---|
+| Chain | X → Y → Z 
+| Fork | X ← C → Z 
+| Collider | X → M ← Z 
+| Diamond | X → {Y,Z} → W 
 
 | Level | Name | Question type |
 |---|---|---|
@@ -42,7 +39,7 @@ Four canonical causal structures × three reasoning levels × 20 questions = 240
 
 ## Summary of findings
 
-All numbers below come from a single seeded run (seed = 42) on a Kaggle T4 GPU. The headline tables in this section use the full 240-question benchmark; the robustness section uses a 120-question stratified subset (40 per reasoning level) so the permutation-averaging budget stays manageable.
+All numbers below come from a single seeded run (seed = 42) on a Kaggle T4 GPU. The headline tables in this section use the full 240-question benchmark; the robustness section uses a 120-question stratified subset (40 per reasoning level).
 
 **Zero-shot accuracy on the full 240-question benchmark:**
 
@@ -57,7 +54,7 @@ All numbers below come from a single seeded run (seed = 42) on a Kaggle T4 GPU. 
 
 **Prompting strategy comparison (overall, 120-question subset, best in bold):**
 
-| Model | Zero-Shot | Few-Shot | CoT | Causal Chain |
+| Model | Zero-Shot | Few-Shot | Chain of Thought (CoT) | Causal Chain |
 |---|---:|---:|---:|---:|
 | GPT-2 Small (at chance)    | 22% | **25%** | 20% | 23% |
 | GPT-2 Large (at chance)    | 23% | **27%** | 19% | 18% |
@@ -68,9 +65,14 @@ All numbers below come from a single seeded run (seed = 42) on a Kaggle T4 GPU. 
 
 ### Robustness checks
 
-The headline numbers above are from a single letter ordering and a single point estimate per cell. Two confounds remain to address.
 
-**Permutation averaging.** A 120-question stratified subset (40 per reasoning level) was re-scored with all four cyclic permutations of A/B/C/D so the correct answer hits each position exactly once across the four passes. Per-question accuracy is the mean over the four passes. Bootstrap 95% CIs (n_iter=2000) are computed over the resulting per-question scores.
+The headline tables above show one accuracy number per cell, computed once. That leaves two questions unanswered: (a) is the score inflated by the model's preference for certain letters, and (b) how stable would the number be on a slightly different sample? The two checks below address each in turn.
+
+**Permutation averaging — does the model just like the letter "C"?**
+LLMs often have a built-in preference for some answer letters over others. PMI calibration removes the baseline part of that preference, but a residue can survive and inflate accuracy when the correct answer happens to land in the model's preferred slot. To check, we re-ask each of 120 questions (40 per level) four times, moving the correct answer to position A on pass 1, B on pass 2, C on pass 3, and D on pass 4. A model that genuinely understands the question gets it right all four times; a model that's just guessing "A" gets credit only when the correct answer is at A. We average the four passes per question, then take the mean across the 40 questions in each cell.
+
+**Bootstrap 95% confidence intervals — could the number have come out differently?**
+Each cell's accuracy is computed from only 40 questions. If we had written 40 different questions of the same type, the number might be a few points higher or lower. The 95% CI bounds that uncertainty: we resample the 40 per-question scores 2,000 times (with replacement), recompute the mean each time, and report the middle 95% of those simulated means. A wide interval means the score is fragile; an interval that overlaps 25% means the cell can't be distinguished from random guessing.
 
 | Model | L1 | L2 | L3 |
 |---|:---:|:---:|:---:|
@@ -80,7 +82,7 @@ The headline numbers above are from a single letter ordering and a single point 
 | Llama-3.2-3B-Inst   | 73% [61, 85] | 50% [39, 61] | 67% [53, 79] |
 | Gemma-2-2B-it       | 57% [48, 67] | 39% [29, 50] | 46% [38, 54] |
 
-All six GPT-2 cells have CIs that include 25%, formally placing them at chance. Every instruct-model cell sits above chance, including L2. The drop from single-perm to perm-averaged accuracy (the residual letter-position bias) was at most 5pp for Llama and GPT-2, 11pp for Qwen and Gemma — i.e., Llama's headline numbers were the most honest, while Qwen's and Gemma's were inflated by ~10pp of position bias.
+Every GPT-2 cell's CI includes 25% — they cannot be distinguished from random guessing. Every instruct-model cell sits above chance, including L2. The gap between the original (single-letter-ordering) score and this permutation-averaged score tells us how much letter-position bias was inflating the original number: at most 5pp for Llama and GPT-2, up to 11pp for Qwen and Gemma. Llama's headline numbers were the most honest; Qwen's and Gemma's were inflated by roughly 10pp of position bias.
 
 **Real-generation Chain-of-Thought.** The CoT row in the strategy table above scores the answer letter against a CoT-flavored prompt template, but the model never actually produces a chain. To check whether real reasoning matches the PMI signal, we re-ran the three instruct models on the same 120-question subset, generating ~250 tokens per question and parsing the answer letter from the output.
 
@@ -147,23 +149,6 @@ python -m scripts.run --strategy-bucket 20
 
 The notebook `Causal_LLM_Understanding.ipynb` runs the same pipeline interactively and is the easier entry point if you want to inspect intermediate results.
 
-## Outputs
-
-Written to `output_llm/`:
-
-| File | What |
-|---|---|
-| `results_summary.json` | All numbers above as a single JSON object |
-| `zero_shot_accuracy.csv` | Model × level (full benchmark) |
-| `strategy_accuracy.csv` | Model × strategy × level (subset) |
-| `detailed_accuracy.csv` | Model × level × graph |
-| `permuted_accuracy.csv` | Model × level: single-perm, perm-averaged mean, 95% CI bounds |
-| `gen_cot_accuracy.csv` | Per-model real-generation CoT accuracy + CI |
-| `raw_predictions.jsonl` | Per-question prediction record across every evaluation |
-| `gen_cot_chains.jsonl` | Full reasoning chains generated by each instruct model |
-| `accuracy_by_graph_level.png`, `prompting_strategy_comparison.png` | Plots |
-| `causal_graphs.png`, `benchmark_stats.png` | Reference figures |
-| `run_manifest.json` | Versions, GPU, seed, timestamp |
 
 ## Notes on scoring
 
